@@ -6,16 +6,31 @@ from llava_server.llava import load_llava
 from llava_server.bertscore import load_bertscore
 import numpy as np
 import os
+import sys
 
 from flask import Flask, request, Blueprint
 
 root = Blueprint("root", __name__)
 
+os.environ["LLAVA_PARAMS_PATH"] = "../llava_weights_13b"#"../llava-weights"
+
+# read in port parameter from command line if it exists
+if len(sys.argv) > 1:
+    PORT = int(sys.argv[1])
+    print("Using port", PORT)
+else:
+    PORT = 8060
+
+
+
 def create_app():
     global INFERENCE_FN, BERTSCORE_FN
-    INFERENCE_FN = load_llava(os.environ["LLAVA_PARAMS_PATH"])
+    print("loading llava and bertscore")
     BERTSCORE_FN = load_bertscore()
-
+    print("loaded bertscore")
+    INFERENCE_FN = load_llava(os.environ["LLAVA_PARAMS_PATH"])
+    print("loaded llava")
+    print("loaded llava and bertscore")
     app = Flask(__name__)
     app.register_blueprint(root)
     return app
@@ -36,9 +51,16 @@ def inference():
         queries = data["queries"]
 
         print(f"Got {len(images)} images, {len(queries[0])} queries per image")
-
-        outputs = INFERENCE_FN(images, queries)
-
+        i=0
+        while i < 5:
+            outputs = INFERENCE_FN(images, queries)
+            # make sure all the outputs are nonempty
+            if all([len(o) > 0 for o in np.array(outputs).reshape(-1).tolist()]):
+                print("All outputs are nonempty")
+                break
+            else:
+                print("Some outputs are empty, retrying...")
+                i += 1
         response = {"outputs": outputs}
 
         if "answers" in data:
@@ -52,9 +74,11 @@ def inference():
                 np.array(outputs).reshape(-1).tolist(),
                 np.array(data["answers"]).reshape(-1).tolist(),
             )
-
+    
             for key in ["precision", "recall", "f1"]:
                 response[key] = response[key].reshape(output_shape).tolist()
+            
+            # make sure that all the scores are nonzero
 
         # returns: a dict with "outputs" and optionally "scores"
         # outputs: (batch_size, num_queries_per_image) of strings
@@ -74,7 +98,7 @@ def inference():
 
 
 HOST = "127.0.0.1"
-PORT = 8085
 
 if __name__ == "__main__":
-    create_app().run(HOST, PORT)
+    print(f"Starting server on {HOST}:{PORT}")
+    create_app().run(HOST, int(sys.argv[1]), threaded=False)
